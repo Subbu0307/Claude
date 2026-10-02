@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from .alerts import AlertPolicy
+from .clutter import ClutterTracker
 from .config import Camera, Settings
 from .density import ZoneTracker
 from .detector import Detector, foot_points
@@ -116,6 +117,11 @@ class Monitor:
             z.id: ZoneTracker(z, smoothing=settings.smoothing, clear_seconds=settings.clear_seconds)
             for z in settings.zones
         }
+        self.clutter = {
+            z.id: ClutterTracker(z, z.keep_clear) for z in settings.zones if z.keep_clear is not None
+        }
+        self._load_references()
+        self.last_frames: dict[str, np.ndarray] = {}  # newest frame per camera, in memory only
         self.sources: dict[str, FrameSource] = {}
         self.last_frame_at: dict[str, float | None] = {c.id: None for c in settings.cameras}
         self.online: dict[str, bool] = {c.id: False for c in settings.cameras}
@@ -123,6 +129,7 @@ class Monitor:
         self.started_at = clock()
         self.snapshots: dict[str, bytes] = {}
         self._detect_lock = threading.Lock()  # ONNX sessions are shared across camera threads
+        self._clutter_lock = threading.Lock()  # camera threads vs. 'Mark cleared' from the dashboard
         self._stop = threading.Event()
 
     # ---- one analysis step per camera (also what the tests drive directly) ----------------
@@ -138,10 +145,21 @@ class Monitor:
             if self._offline_alerted[camera.id]:
                 self._offline_alerted[camera.id] = False
                 self.policy.on_camera(camera.name, True, [z.name for z in camera.zones])
+        self.last_frames[camera.id] = frame
         for zone in camera.zones:
             inside = int(points_in_polygon(feet, zone.polygon).sum())
-            for event in self.trackers[zone.id].update(inside, now):
+            tracker = self.trackers[zone.id]
+            for event in tracker.update(inside, now):
                 self.policy.on_zone_event(event)
+            if zone.id in self.clutter:
+                clutter = self.clutter[zone.id]
+                with self._clutter_lock:
+                    had_reference = clutter.state.has_reference
+                    events = clutter.update(frame, boxes, inside, tracker.state.density, now)
+                    if not had_reference and clutter.state.has_reference:
+                        self._save_reference(zone.id)
+                for event in events:
+                    self.policy.on_clutter(event)
         if self.settings.snapshots:
             self.snapshots[camera.id] = self._annotate(camera, frame, boxes)
 
@@ -172,11 +190,54 @@ class Monitor:
             cv2.fillPoly(overlay, [pts], color)
             img = cv2.addWeighted(overlay, 0.25, img, 0.75, 0)
             cv2.polylines(img, [pts], True, color, 2)
+            if zone.id in self.clutter:
+                self.clutter[zone.id].overlay(img)
             x, y = pts.min(axis=0)
             cv2.putText(img, f"{zone.name}: {st.density:.1f}/m2", (int(x) + 4, int(y) + 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
         return jpg.tobytes() if ok else b""
+
+    # ---- floor-clutter references -----------------------------------------------------------
+
+    def mark_cleared(self, zone_id: str) -> None:
+        """Staff pressed 'Mark cleared': the floor is clean now, so remember how it looks."""
+        tracker = self.clutter.get(zone_id)
+        if tracker is None:
+            raise KeyError(zone_id)
+        frame = self.last_frames.get(tracker.zone.camera_id)
+        if frame is None:
+            raise LookupError("No frame from this camera yet")
+        with self._clutter_lock:
+            was_alerting = tracker.state.alerting
+            tracker.set_reference(frame)
+            self._save_reference(zone_id)
+        if was_alerting:
+            from .clutter import ClutterEvent
+
+            self.policy.on_clutter(ClutterEvent("cleared", tracker.zone, 0))
+
+    def _reference_path(self, zone_id: str):
+        from pathlib import Path
+
+        return Path(self.settings.state_dir) / f"clean_floor_{zone_id}.npy"
+
+    def _save_reference(self, zone_id: str) -> None:
+        # Only the zone's empty floor (normalised greyscale) is stored, never people.
+        ref = self.clutter[zone_id].reference_image()
+        if ref is None or not self.settings.state_dir:
+            return
+        path = self._reference_path(zone_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(path, ref)
+
+    def _load_references(self) -> None:
+        if not self.settings.state_dir:
+            return
+        for zone_id, tracker in self.clutter.items():
+            path = self._reference_path(zone_id)
+            if path.exists():
+                tracker.load_reference(np.load(path))
 
     # ---- threads ---------------------------------------------------------------------------
 
@@ -226,6 +287,8 @@ class Monitor:
                 "id": cam.id, "name": cam.name, "online": self.online[cam.id],
                 "seconds_since_frame": round(now - last, 1) if last is not None else None,
                 "zones": [{**self.trackers[z.id].state.__dict__, "area_m2": round(z.area_m2, 1),
-                           "thresholds": z.thresholds.__dict__} for z in cam.zones],
+                           "thresholds": z.thresholds.__dict__,
+                           "clutter": self.clutter[z.id].state.__dict__ if z.id in self.clutter else None}
+                          for z in cam.zones],
             })
         return {"site": self.settings.site_name, "cameras": cameras}

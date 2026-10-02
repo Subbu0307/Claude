@@ -41,6 +41,21 @@ class Thresholds:
 
 
 @dataclass
+class ClutterSettings:
+    """For zones that must stay clear (steps, exits, walkways): alert when footwear or other objects
+    pile up on the floor."""
+
+    alert_objects: int = 3  # alert when at least this many items are lying in the zone...
+    alert_percent: float = 3.0  # ...or when they cover this % of its floor (a heap counts as one item)
+    min_object_pixels: int = 60  # ignore specks smaller than this (raise for close-up cameras)
+    alert_seconds: float = 60.0  # ...for this long before alerting (and before 'cleared')
+    repeat_seconds: float = 900.0  # remind every 15 min until someone clears it
+    difference: float = 0.8  # how different from the clean floor a pixel must look (brightness std units)
+    persistence_rate: float = 0.15  # how quickly a patch counts as "staying put" (0..1 per sample)
+    max_density_to_judge: float = 1.5  # above this people/m², the floor is too hidden to judge
+
+
+@dataclass
 class Zone:
     id: str
     name: str
@@ -51,6 +66,7 @@ class Zone:
     # Detectors undercount when people block each other. Set this from a manual-count check
     # (manual count / detected count on sample frames at peak times). See README.
     count_multiplier: float = 1.0
+    keep_clear: ClutterSettings | None = None
 
 
 @dataclass
@@ -83,6 +99,7 @@ class Settings:
     repeat_critical_seconds: float = 120.0
     offline_after_seconds: float = 20.0
     snapshots: bool = True
+    state_dir: str = "state"  # clean-floor references for keep_clear zones survive restarts here
 
     @property
     def zones(self) -> list[Zone]:
@@ -99,6 +116,17 @@ def _thresholds(raw: dict[str, Any] | None, base: Thresholds) -> Thresholds:
     if not (0 < t.busy < t.warning < t.critical):
         raise ConfigError(f"Thresholds must satisfy 0 < busy < warning < critical, got {merged}")
     return t
+
+
+def _clutter(raw: Any) -> ClutterSettings | None:
+    if not raw:
+        return None
+    if raw is True:
+        return ClutterSettings()
+    unknown = set(raw) - set(ClutterSettings.__dataclass_fields__)
+    if unknown:
+        raise ConfigError(f"Unknown keep_clear options: {sorted(unknown)}")
+    return ClutterSettings(**raw)
 
 
 def load_settings(path: str | Path) -> Settings:
@@ -143,6 +171,7 @@ def parse_settings(raw: dict[str, Any]) -> Settings:
                     area_m2=area,
                     thresholds=_thresholds(z.get("thresholds"), defaults),
                     count_multiplier=float(z.get("count_multiplier", 1.0)),
+                    keep_clear=_clutter(z.get("keep_clear")),
                 )
             )
         cameras.append(cam)
@@ -158,7 +187,7 @@ def parse_settings(raw: dict[str, Any]) -> Settings:
 
     options = {k: raw[k] for k in (
         "model_path", "detection_confidence", "sample_seconds", "smoothing", "clear_seconds",
-        "repeat_critical_seconds", "offline_after_seconds", "snapshots",
+        "repeat_critical_seconds", "offline_after_seconds", "snapshots", "state_dir",
     ) if k in raw}
     if "tiles" in raw:
         options["tiles"] = tuple(raw["tiles"])

@@ -45,6 +45,10 @@
   summary { cursor: pointer; color: var(--muted); }
   details img { width: 100%; max-width: 960px; border-radius: 8px; margin-top: 8px; display: block; }
   #error { color: var(--critical); font-weight: 600; }
+  .clutter { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 13px;
+             display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .clutter button { font-size: 12px; padding: 3px 8px; }
+  .clutter-alert { color: var(--warning); }
   @media (prefers-reduced-motion: reduce) { .zone.critical { animation: none; } }
 </style>
 </head>
@@ -82,12 +86,34 @@ function beep() {
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
+function clutterLine(z) {
+  const c = z.clutter;
+  if (!c) return "";
+  let text;
+  if (!c.has_reference) text = "👟 Learning clean floor (waits for the area to be empty)";
+  else if (!c.floor_visible) text = "👟 Floor hidden by crowd";
+  else if (c.alerting) text = `<strong class="clutter-alert">👟 ${c.objects} items on the floor: clear them</strong>`;
+  else text = c.objects ? `👟 ${c.objects} item(s) on the floor` : "👟 Floor clear";
+  return `<div class="clutter">${text}
+    <button type="button" data-clear="${esc(z.zone_id)}" title="Press after the floor has been cleaned">Mark cleared</button></div>`;
+}
+
+document.addEventListener("click", async (e) => {
+  const id = e.target.dataset && e.target.dataset.clear;
+  if (!id) return;
+  e.target.disabled = true;
+  const res = await fetch(`api/zones/${encodeURIComponent(id)}/mark-cleared`, { method: "POST" });
+  if (!res.ok) alert("Could not mark cleared: " + (await res.text()));
+  refresh();
+});
+
 function zoneCard(z) {
   const key = z.stale ? "stale" : z.level;
   const pct = Math.min(100, (z.density / (z.thresholds.critical * 1.25)) * 100);
   const trend = z.rise_per_minute > 0.05 ? `↑ ${z.rise_per_minute.toFixed(2)}/m² per min` :
                 z.rise_per_minute < -0.05 ? `↓ ${Math.abs(z.rise_per_minute).toFixed(2)}/m² per min` : "→ steady";
   const eta = z.minutes_to_critical != null && z.rise_per_minute >= z.thresholds.rise_per_minute
+    && z.density >= z.thresholds.busy && !z.stale
     ? `<div class="rising">Critical in ~${Math.round(z.minutes_to_critical)} min at this rate</div>` : "";
   return `<div class="zone ${z.stale ? "" : esc(z.level)}" style="--c:${COLORS[key]}">
     <div class="name">${esc(z.name)}</div>
@@ -97,6 +123,7 @@ function zoneCard(z) {
     <div class="meta">~${z.count} people · ${z.area_m2} m² · ${trend}</div>
     <div class="meta">Warning ${z.thresholds.warning} · Critical ${z.thresholds.critical} /m²</div>
     ${eta}
+    ${clutterLine(z)}
   </div>`;
 }
 
@@ -111,10 +138,12 @@ async function refresh() {
     const crit = zones.filter((z) => z.level === "critical");
     const warn = zones.filter((z) => z.level === "warning");
     const offline = data.cameras.filter((c) => !c.online);
+    const cluttered = zones.filter((z) => z.clutter && z.clutter.alerting);
     const parts = [];
     if (crit.length) parts.push(`🔴 ${crit.length} critical`);
     if (warn.length) parts.push(`🟠 ${warn.length} warning`);
     if (offline.length) parts.push(`⚠️ ${offline.length} camera(s) offline`);
+    if (cluttered.length) parts.push(`👟 ${cluttered.length} area(s) need clearing`);
     document.getElementById("summary").textContent = parts.join(" · ") || "🟢 All zones normal";
     if (crit.length) beep();
 

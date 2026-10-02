@@ -168,6 +168,19 @@ class AlertPolicy:
             body = f"{stats}, rising {e.rise_per_minute:.1f}/m² per minute.{eta}\n{ACTIONS['warning']}"
             self._send(Alert("warning", title, body, key))
 
+    def on_clutter(self, e) -> None:
+        z = e.zone
+        if e.kind == "clutter":
+            self._send(Alert(
+                "warning", f"👟 Footwear piling up: {z.name} ({self.site})",
+                f"{e.objects} item(s) or heap(s) have been lying on the floor here for over a minute. Send a volunteer "
+                "to clear them: in a rush, people trip over footwear on steps and in exits. "
+                "Press 'Mark cleared' on the dashboard when done.",
+                f"{z.id}:clutter",
+            ))
+        else:
+            self._send(Alert("warning", f"✅ Clear again: {z.name}", "Floor is clear.", f"{z.id}:clutter:clear"))
+
     def on_camera(self, camera_name: str, online: bool, zone_names: list[str]) -> None:
         if online:
             alert = Alert("warning", f"✅ Camera back online: {camera_name}",

@@ -12,6 +12,7 @@ clear_seconds: 60        # how long density must stay lower before a zone is dow
 repeat_critical_seconds: 120
 offline_after_seconds: 20
 snapshots: true          # annotated images on the dashboard (kept in memory only, never saved)
+state_dir: state         # clean-floor references for keep_clear zones (empty floor only, no people)
 
 # People per square metre. Below ~2 people move freely; at 4–5 they lose control of their movement.
 default_thresholds:
@@ -49,6 +50,9 @@ cameras:
         name: Exit stairs
         polygon: [[900, 150], [1100, 150], [1150, 400], [880, 400]]
         area_m2: 18
+        keep_clear:              # alert when footwear (or anything else) is left lying on the stairs
+          alert_objects: 3
+          alert_seconds: 60
         thresholds:              # moving crowd on stairs: act much earlier
           busy: 1.0
           warning: 1.5

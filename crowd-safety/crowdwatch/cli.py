@@ -122,12 +122,33 @@ def cmd_run(args) -> None:
 # ---- drill ---------------------------------------------------------------------------------
 
 class DrillSource:
-    def __init__(self, camera_id: str, width=1280, height=720):
-        self.camera_id = camera_id
-        self.frame = np.full((height, width, 3), 40, dtype=np.uint8)
+    """A synthetic floor. In keep_clear zones, footwear starts appearing a few seconds in."""
+
+    def __init__(self, camera, width=1280, height=720, shoes_every: float = 2.0):
+        self.camera_id = camera.id
+        rng = np.random.default_rng(3)
+        self.frame = rng.integers(70, 110, (height, width, 3), dtype=np.uint8)  # textured "floor"
+        self.frame = cv2.GaussianBlur(self.frame, (7, 7), 0)
         cv2.putText(self.frame, "DRILL - SIMULATED CROWD", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 200, 255), 2)
+        self.start = time.monotonic()
+        self.shoes_every = shoes_every
+        self.shoe_spots = []
+        for z in camera.zones:
+            if z.keep_clear:
+                pts = np.asarray(z.polygon)
+                (x0, y0), (x1, y1) = pts.min(axis=0) + 20, pts.max(axis=0) - 20
+                cand = np.column_stack([rng.uniform(x0, x1, 40), rng.uniform(y0, y1, 40)])
+                self.shoe_spots += [tuple(map(int, p)) for p in cand[points_in_polygon(cand, z.polygon)][:6]]
+        self.drawn = 0
 
     def read(self):
+        # Drawn in place: the frame object must stay the same for DrillDetector's camera lookup.
+        due = int((time.monotonic() - self.start - 6) / self.shoes_every) if self.shoe_spots else 0
+        while self.drawn < min(due, len(self.shoe_spots)):
+            x, y = self.shoe_spots[self.drawn]
+            cv2.ellipse(self.frame, (x, y), (16, 7), 20, 0, 360, (25, 25, 30), -1)
+            cv2.ellipse(self.frame, (x + 22, y + 4), (16, 7), 20, 0, 360, (25, 25, 30), -1)
+            self.drawn += 1
         return self.frame
 
     def close(self):
@@ -147,6 +168,8 @@ class DrillDetector:
         self.rng = random.Random(7)
 
     def density_at(self, index: int, t: float) -> float:
+        if t < 3:
+            return 0.0  # empty for the first seconds so keep_clear zones can learn the clean floor
         t -= index * self.ramp / 3
         if t < 0:
             return 1.0
@@ -157,7 +180,7 @@ class DrillDetector:
         return max(1.0, self.peak - (self.peak - 1.0) * (t - self.ramp * 1.5) / self.ramp)
 
     def source_for(self, camera) -> "DrillSource":
-        source = DrillSource(camera.id)
+        source = DrillSource(camera)
         self.frame_camera[id(source.frame)] = camera.id
         return source
 
@@ -184,6 +207,11 @@ class DrillDetector:
 def cmd_drill(args) -> None:
     settings = load_settings(args.config)
     settings.clear_seconds = min(settings.clear_seconds, args.ramp / 4)
+    settings.state_dir = ""  # don't overwrite real clean-floor references with drill ones
+    for z in settings.zones:
+        if z.keep_clear:
+            z.keep_clear.alert_seconds = min(z.keep_clear.alert_seconds, 10)
+            z.keep_clear.max_density_to_judge = 99  # drill people are drawn as boxes only
     print(f"DRILL: simulated crowds ramp past critical over {args.ramp:.0f}s per zone. "
           "Alerts go to the configured recipients, so tell them it's a drill first.")
     detector = DrillDetector(settings.zones, args.ramp)

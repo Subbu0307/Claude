@@ -42,6 +42,9 @@ moving crowds become dangerous at lower densities than standing ones.
 - **Fails loudly**: a frozen or disconnected camera raises a "Camera OFFLINE, post a steward" alert
   and its zones turn grey ("No live data"). They are never shown as safe. If the dashboard loses its
   connection to the server, it says so in red.
+- **Footwear on steps and exits**: zones marked `keep_clear` (stairs, exits, walkways) raise
+  "👟 Footwear piling up: clear it" when footwear or other objects are left lying there. Abandoned
+  footwear is a major trip hazard when a crowd surges. See [Footwear and clutter](#footwear-and-clutter-on-steps-and-exits).
 - **Routing by severity**: e.g. control room from *busy*, duty officer from *warning*, police from
   *critical*.
 - **Drill mode**: simulated crowds ramp through every level so you can rehearse the response and
@@ -98,6 +101,35 @@ python -m crowdwatch.cli drill site.yaml --ramp 60
    ```
    Run it on a PC on the same network as the NVR, ideally on a UPS. Put the dashboard on a big screen
    in the control room and press **Enable alarm sound**.
+
+## Footwear and clutter on steps and exits
+
+Where people leave footwear wherever they like, it ends up on steps, in exits and across walkways,
+and in a surge people trip over it and fall. For any zone that must stay clear, add:
+
+```yaml
+keep_clear:
+  alert_objects: 3      # alert when 3+ items are lying there...
+  alert_percent: 3      # ...or a heap covers 3% of the floor
+  alert_seconds: 60     # ...and has stayed put for a minute
+```
+
+**How it works.** No footwear-specific model is needed. CrowdWatch keeps a picture of the zone's
+floor when it's clean, and looks for patches that differ from it *and stay different*. People are
+masked out using the person detector, so footwear dropped on a step is found while feet walking past
+are ignored. It also copes with lighting changes and plain stone floors. Anything left lying there is
+flagged, footwear, bags or flower baskets alike, since all are trip hazards.
+
+**Day-to-day use.**
+- The clean floor is learned automatically the first time the zone is empty. After cleaning, a
+  volunteer presses **Mark cleared** on the dashboard, which also resets the alert.
+- While uncleared, the alert repeats every 15 minutes. Removed footwear produces a "✅ Clear again"
+  message.
+- When the zone is crowded (above 1.5 people/m² by default) the floor can't be seen, so this check
+  pauses and the density alerts take over.
+- Tested on a real street photo, it found all footwear placed on the pavement, ignored a 30% lighting
+  change and people walking through, and stayed quiet on plain floors. Verify on your own floors with a
+  drill: drop a few pairs on the steps and check the alert arrives.
 
 ## Hardware
 

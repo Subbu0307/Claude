@@ -14,6 +14,7 @@ BASE = {
     "clear_seconds": 30,
     "offline_after_seconds": 20,
     "repeat_critical_seconds": 120,
+    "state_dir": "",
     "cameras": [{
         "id": "cam1", "name": "Gate cam", "source": "0",
         "zones": [{"id": "gate", "name": "Gate", "polygon": [[0, 0], [1000, 0], [1000, 1000], [0, 1000]],

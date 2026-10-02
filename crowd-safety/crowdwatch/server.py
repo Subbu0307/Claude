@@ -40,6 +40,16 @@ def create_app(monitor: Monitor, password: str | None = None) -> FastAPI:
             raise HTTPException(404, "No snapshot yet")
         return Response(jpg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
+    @app.post("/api/zones/{zone_id}/mark-cleared", dependencies=[Depends(auth)])
+    def mark_cleared(zone_id: str) -> dict:
+        try:
+            monitor.mark_cleared(zone_id)
+        except KeyError:
+            raise HTTPException(404, "This zone has no keep_clear monitoring")
+        except LookupError as e:
+            raise HTTPException(409, str(e))
+        return {"status": "ok"}
+
     @app.get("/health")
     def health() -> dict:
         return {"status": "ok"}
