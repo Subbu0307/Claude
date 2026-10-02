@@ -1,0 +1,21 @@
+# Footwear finder configuration. Copy to finder.yaml and edit.
+site_name: Sri Example Temple
+whatsapp_number: "919800000000"   # the temple's WhatsApp Business number, digits only (used in QR codes)
+retention_hours: 12               # saved spots and photos are deleted after this, or when found
+
+# One numbered board at each place where people leave footwear. Print boards with:
+#   python -m finder.posters finder.yaml posters.html
+# 'route' is how to get back after darshan WITHOUT walking against the incoming crowd.
+spots:
+  - code: E1
+    name: East gate, left of the steps
+    route: Leave by Exit 2 (north), turn right and walk along the outer wall to the east gate.
+  - code: E2
+    name: East gate, right of the steps
+    route: Leave by Exit 2 (north), turn right and walk along the outer wall to the east gate.
+  - code: N1
+    name: North gate, under the neem tree
+    route: Exit 2 (north) brings you out right next to it.
+  - code: P1
+    name: Parking lot, near the water tank
+    route: Leave by Exit 3 (west) and follow the outer road to the parking lot.

@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrowdWatch</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1b1d21; --muted: #626875; --line: #dde0e6;
+    --normal: #2e7d32; --busy: #b88600; --warning: #d9620b; --critical: #c62828; --stale: #7b808a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121417; --card: #1c1f24; --text: #eceef2; --muted: #9aa1ad; --line: #2c3038;
+      --normal: #4caf50; --busy: #e0b000; --warning: #ff8a3d; --critical: #ff5252; --stale: #8a909b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+           padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--card);
+           position: sticky; top: 0; z-index: 1; }
+  h1 { font-size: 18px; margin: 0; }
+  #summary { font-weight: 600; }
+  button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--bg); color: var(--text); cursor: pointer; }
+  main { padding: 16px; display: grid; gap: 20px; max-width: 1400px; margin: 0 auto; }
+  .camera h2 { font-size: 15px; margin: 0 0 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 99px; font-weight: 600; color: #fff; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .zone { background: var(--card); border: 1px solid var(--line); border-left: 8px solid var(--c);
+          border-radius: 10px; padding: 12px 14px; }
+  .zone.critical { animation: pulse 1s ease-in-out infinite alternate; }
+  @keyframes pulse { to { box-shadow: 0 0 0 4px color-mix(in srgb, var(--critical) 45%, transparent); } }
+  .zone .name { font-weight: 600; }
+  .zone .level { color: var(--c); font-weight: 700; text-transform: uppercase; font-size: 13px; }
+  .zone .density { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .zone .density small { font-size: 14px; color: var(--muted); font-weight: 500; }
+  .zone .meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; margin: 8px 0; overflow: hidden; }
+  .bar span { display: block; height: 100%; background: var(--c); }
+  .rising { color: var(--warning); font-weight: 600; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--muted); }
+  details img { width: 100%; max-width: 960px; border-radius: 8px; margin-top: 8px; display: block; }
+  #error { color: var(--critical); font-weight: 600; }
+  .clutter { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 13px;
+             display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .clutter button { font-size: 12px; padding: 3px 8px; }
+  .clutter-alert { color: var(--warning); }
+  @media (prefers-reduced-motion: reduce) { .zone.critical { animation: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="site">CrowdWatch</h1>
+  <span id="summary">Loading…</span>
+  <span id="error"></span>
+  <button id="sound" type="button" aria-pressed="false">🔇 Enable alarm sound</button>
+</header>
+<main id="cameras"></main>
+<script>
+const COLORS = { normal: "var(--normal)", busy: "var(--busy)", warning: "var(--warning)",
+                 critical: "var(--critical)", stale: "var(--stale)" };
+let soundOn = false, audio, lastBeep = 0;
+
+document.getElementById("sound").onclick = (e) => {
+  soundOn = !soundOn;
+  if (soundOn && !audio) audio = new AudioContext();  // browsers only allow audio after a click
+  e.target.textContent = soundOn ? "🔊 Alarm sound on" : "🔇 Enable alarm sound";
+  e.target.setAttribute("aria-pressed", soundOn);
+};
+
+function beep() {
+  if (!soundOn || !audio || Date.now() - lastBeep < 4000) return;
+  lastBeep = Date.now();
+  for (let i = 0; i < 3; i++) {
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = 880; o.connect(g); g.connect(audio.destination);
+    const t = audio.currentTime + i * 0.35;
+    g.gain.setValueAtTime(0.25, t); g.gain.setValueAtTime(0, t + 0.2);
+    o.start(t); o.stop(t + 0.22);
+  }
+}
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+function clutterLine(z) {
+  const c = z.clutter;
+  if (!c) return "";
+  let text;
+  if (!c.has_reference) text = "👟 Learning clean floor (waits for the area to be empty)";
+  else if (!c.floor_visible) text = "👟 Floor hidden by crowd";
+  else if (c.alerting) text = `<strong class="clutter-alert">👟 ${c.objects} items on the floor: clear them</strong>`;
+  else text = c.objects ? `👟 ${c.objects} item(s) on the floor` : "👟 Floor clear";
+  return `<div class="clutter">${text}
+    <button type="button" data-clear="${esc(z.zone_id)}" title="Press after the floor has been cleaned">Mark cleared</button></div>`;
+}
+
+document.addEventListener("click", async (e) => {
+  const id = e.target.dataset && e.target.dataset.clear;
+  if (!id) return;
+  e.target.disabled = true;
+  const res = await fetch(`api/zones/${encodeURIComponent(id)}/mark-cleared`, { method: "POST" });
+  if (!res.ok) alert("Could not mark cleared: " + (await res.text()));
+  refresh();
+});
+
+function zoneCard(z) {
+  const key = z.stale ? "stale" : z.level;
+  const pct = Math.min(100, (z.density / (z.thresholds.critical * 1.25)) * 100);
+  const trend = z.rise_per_minute > 0.05 ? `↑ ${z.rise_per_minute.toFixed(2)}/m² per min` :
+                z.rise_per_minute < -0.05 ? `↓ ${Math.abs(z.rise_per_minute).toFixed(2)}/m² per min` : "→ steady";
+  const eta = z.minutes_to_critical != null && z.rise_per_minute >= z.thresholds.rise_per_minute
+    && z.level !== "normal" && !z.stale
+    ? `<div class="rising">Critical in ~${Math.round(z.minutes_to_critical)} min at this rate</div>` : "";
+  return `<div class="zone ${z.stale ? "" : esc(z.level)}" style="--c:${COLORS[key]}">
+    <div class="name">${esc(z.name)}</div>
+    <div class="level">${z.stale ? "No live data" : esc(z.level)}</div>
+    <div class="density">${z.stale ? "—" : z.density.toFixed(1)} <small>people/m²</small></div>
+    <div class="bar"><span style="width:${z.stale ? 0 : pct}%"></span></div>
+    <div class="meta">~${z.count} people · ${z.area_m2} m² · ${trend}</div>
+    <div class="meta">Warning ${z.thresholds.warning} · Critical ${z.thresholds.critical} /m²</div>
+    ${eta}
+    ${clutterLine(z)}
+  </div>`;
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("api/status", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    document.getElementById("error").textContent = "";
+    document.getElementById("site").textContent = `CrowdWatch · ${data.site}`;
+    const zones = data.cameras.flatMap((c) => c.zones);
+    const crit = zones.filter((z) => z.level === "critical");
+    const warn = zones.filter((z) => z.level === "warning");
+    const offline = data.cameras.filter((c) => !c.online);
+    const cluttered = zones.filter((z) => z.clutter && z.clutter.alerting);
+    const parts = [];
+    if (crit.length) parts.push(`🔴 ${crit.length} critical`);
+    if (warn.length) parts.push(`🟠 ${warn.length} warning`);
+    if (offline.length) parts.push(`⚠️ ${offline.length} camera(s) offline`);
+    if (cluttered.length) parts.push(`👟 ${cluttered.length} area(s) need clearing`);
+    document.getElementById("summary").textContent = parts.join(" · ") || "🟢 All zones normal";
+    if (crit.length) beep();
+
+    const openSnaps = new Set([...document.querySelectorAll("details[open]")].map((d) => d.dataset.cam));
+    document.getElementById("cameras").innerHTML = data.cameras.map((c) => `
+      <section class="camera">
+        <h2>${esc(c.name)}
+          <span class="pill" style="background:${c.online ? "var(--normal)" : "var(--critical)"}">
+            ${c.online ? "LIVE" : "OFFLINE"}</span>
+          ${c.seconds_since_frame != null ? `<span class="meta">updated ${c.seconds_since_frame}s ago</span>` : ""}
+        </h2>
+        <div class="grid">${c.zones.map(zoneCard).join("")}</div>
+        <details data-cam="${esc(c.id)}" ${openSnaps.has(c.id) ? "open" : ""}>
+          <summary>Camera view</summary>
+          ${openSnaps.has(c.id) ? `<img alt="Annotated view from ${esc(c.name)}" src="api/cameras/${encodeURIComponent(c.id)}/snapshot.jpg?t=${Date.now()}"
+               onerror="this.replaceWith(Object.assign(document.createElement('p'),{textContent:'No image yet'}))">` : ""}
+        </details>
+      </section>`).join("");
+  } catch (e) {
+    // A dashboard that silently freezes is dangerous: say loudly that the data is not live.
+    document.getElementById("error").textContent = "⚠️ Lost connection to CrowdWatch server — data is NOT live";
+  }
+}
+// Opening a camera panel loads its image straight away (images only load while a panel is open).
+document.addEventListener("click", (e) => { if (e.target.closest("summary")) setTimeout(refresh, 0); });
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
