@@ -113,7 +113,7 @@ function zoneCard(z) {
   const trend = z.rise_per_minute > 0.05 ? `↑ ${z.rise_per_minute.toFixed(2)}/m² per min` :
                 z.rise_per_minute < -0.05 ? `↓ ${Math.abs(z.rise_per_minute).toFixed(2)}/m² per min` : "→ steady";
   const eta = z.minutes_to_critical != null && z.rise_per_minute >= z.thresholds.rise_per_minute
-    && z.density >= z.thresholds.busy && !z.stale
+    && z.level !== "normal" && !z.stale
     ? `<div class="rising">Critical in ~${Math.round(z.minutes_to_critical)} min at this rate</div>` : "";
   return `<div class="zone ${z.stale ? "" : esc(z.level)}" style="--c:${COLORS[key]}">
     <div class="name">${esc(z.name)}</div>
