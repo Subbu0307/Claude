@@ -1,0 +1,73 @@
+# CrowdWatch site configuration. Copy to site.yaml and edit.
+# Validate with:  python -m crowdwatch.cli check site.yaml --frame frame_from_camera.jpg
+
+site_name: Sri Example Temple
+
+model_path: models/yolox_s.onnx
+detection_confidence: 0.35
+tiles: [2, 2]            # also analyse a 2x2 grid of crops: finds small, distant people in wide shots
+sample_seconds: 2        # analyse each camera every 2 seconds
+smoothing: 0.5           # 1 = react to every reading, lower = steadier but slower
+clear_seconds: 60        # how long density must stay lower before a zone is downgraded
+repeat_critical_seconds: 120
+offline_after_seconds: 20
+snapshots: true          # annotated images on the dashboard (kept in memory only, never saved)
+
+# People per square metre. Below ~2 people move freely; at 4–5 they lose control of their movement.
+default_thresholds:
+  busy: 2.0
+  warning: 3.0
+  critical: 4.0
+  rise_per_minute: 0.75  # also alert when density climbs this fast
+
+cameras:
+  - id: gate1
+    name: Main gate (east)
+    source: rtsp://user:password@192.168.1.64:554/Streaming/Channels/102   # use a sub-stream (~720p)
+    # 4 marks on the floor and their measured positions in metres. Lets CrowdWatch work out the
+    # true floor area of each zone despite perspective. Use tile corners, pillar bases, painted lines.
+    ground_calibration:
+      image_points:    [[312, 690], [968, 702], [884, 344], [402, 338]]
+      ground_points_m: [[0, 0],     [8, 0],     [8, 14],    [0, 14]]
+    zones:
+      - id: gate1_queue
+        name: Gate 1 queue pen
+        polygon: [[300, 700], [980, 710], [890, 340], [395, 335]]   # image pixels, on the floor
+        count_multiplier: 1.3    # set from a manual-count check at peak time (see README)
+
+  - id: hall
+    name: Darshan hall
+    source: rtsp://user:password@192.168.1.65:554/Streaming/Channels/102
+    zones:
+      - id: hall_front
+        name: In front of sanctum
+        polygon: [[120, 420], [1160, 420], [1240, 710], [40, 710]]
+        area_m2: 60              # alternatively measure the area directly
+        thresholds:              # static, packed crowd facing one direction: same limits
+          critical: 4.0
+      - id: hall_exit_stairs
+        name: Exit stairs
+        polygon: [[900, 150], [1100, 150], [1150, 400], [880, 400]]
+        area_m2: 18
+        thresholds:              # moving crowd on stairs: act much earlier
+          busy: 1.0
+          warning: 1.5
+          critical: 2.0
+          rise_per_minute: 0.5
+
+recipients:
+  - name: Control room
+    channel: console
+    min_level: busy
+  - name: Duty officer
+    channel: whatsapp
+    address: "919800000001"      # country code + number, digits only
+    min_level: warning
+  - name: Police liaison
+    channel: whatsapp
+    address: "919800000002"
+    min_level: critical
+  # - name: PA system / SMS gateway
+  #   channel: webhook
+  #   address: http://192.168.1.10:9000/crowd-alert
+  #   min_level: critical
